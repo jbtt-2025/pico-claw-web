@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
 ARG PICOCLAW_IMAGE=docker.io/sipeed/picoclaw:v0.2.9-launcher
-ARG RUNTIME_IMAGE=mcr.microsoft.com/playwright:latest
+ARG RUNTIME_IMAGE=mcr.microsoft.com/playwright:v1.59.0-noble
+ARG PLAYWRIGHT_VERSION=1.59.0
 
 FROM --platform=$TARGETPLATFORM ${PICOCLAW_IMAGE} AS picoclaw
 
@@ -68,9 +69,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g \
       pnpm \
       yarn \
-      playwright \
-      @playwright/test \
-      @playwright/cli \
+      playwright@${PLAYWRIGHT_VERSION} \
+      @playwright/test@${PLAYWRIGHT_VERSION} \
       @playwright/mcp \
       agent-browser \
       @openai/codex \
@@ -106,6 +106,7 @@ else
     -port "$WEB_PORT"
 fi
 EOF
+
 RUN chmod +x /usr/local/bin/picoclaw-heavy-entrypoint.sh
 
 EXPOSE 18800 18790
