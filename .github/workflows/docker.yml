@@ -2,7 +2,7 @@ name: Publish Docker images
 
 on:
   schedule:
-    # Asia/Tokyo 每日 00:00；只检测，上游没变就不构建
+    # Asia/Tokyo 每日 00:00；只检测，没变化就不构建
     - cron: '0 15 * * *'
 
   workflow_dispatch:
@@ -25,12 +25,9 @@ on:
 
 env:
   REGISTRY: ghcr.io
-
   BASE_IMAGE: jbtt-2025/pico-claw-web
   HEAVY_IMAGE: jbtt-2025/pico-claw-web-heavy
-
-  PICOCLAW_UPSTREAM_IMAGE: docker.io/sipeed/picoclaw:v0.2.9-launcher
-  HEAVY_RUNTIME_IMAGE: mcr.microsoft.com/playwright:latest
+  PLAYWRIGHT_RUNTIME_OS: noble
 
 concurrency:
   group: publish-docker-${{ github.ref }}
@@ -51,6 +48,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Node.js for version resolving
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -64,11 +66,59 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve upstream images
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PICOCLAW_UPSTREAM_IMAGE="$(
+            awk -F= '
+              /^ARG[[:space:]]+PICOCLAW_IMAGE=/ {
+                print $2
+                exit
+              }
+            ' Dockerfile
+          )"
+
+          if [ -z "$PICOCLAW_UPSTREAM_IMAGE" ]; then
+            PICOCLAW_UPSTREAM_IMAGE="$(
+              awk '
+                toupper($1)=="FROM" {
+                  for (i=2; i<=NF; i++) {
+                    if ($i !~ /^--platform=/ && toupper($i)!="AS") {
+                      print $i
+                      exit
+                    }
+                  }
+                }
+              ' Dockerfile
+            )"
+          fi
+
+          if [ -z "$PICOCLAW_UPSTREAM_IMAGE" ]; then
+            echo "Failed to resolve PicoClaw upstream image from Dockerfile." >&2
+            exit 1
+          fi
+
+          PLAYWRIGHT_VERSION="$(npm view playwright version)"
+          HEAVY_RUNTIME_IMAGE="mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-${PLAYWRIGHT_RUNTIME_OS}"
+
+          echo "picoclaw_upstream_image=${PICOCLAW_UPSTREAM_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "playwright_version=${PLAYWRIGHT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "heavy_runtime_image=${HEAVY_RUNTIME_IMAGE}" >> "$GITHUB_OUTPUT"
+
+          echo "PicoClaw upstream image: ${PICOCLAW_UPSTREAM_IMAGE}"
+          echo "Playwright version: ${PLAYWRIGHT_VERSION}"
+          echo "Heavy runtime image: ${HEAVY_RUNTIME_IMAGE}"
+
       - name: Check upstream image digests
         id: check
         shell: bash
         env:
           FORCE_REBUILD: ${{ inputs.force_rebuild || 'false' }}
+          PICOCLAW_UPSTREAM_IMAGE: ${{ steps.resolve.outputs.picoclaw_upstream_image }}
+          HEAVY_RUNTIME_IMAGE: ${{ steps.resolve.outputs.heavy_runtime_image }}
         run: |
           set -euo pipefail
 
@@ -135,18 +185,18 @@ jobs:
           echo "build_base=${BUILD_BASE}" >> "$GITHUB_OUTPUT"
           echo "build_heavy=${BUILD_HEAVY}" >> "$GITHUB_OUTPUT"
 
-          echo "PicoClaw upstream: ${PICOCLAW_UPSTREAM_IMAGE}@${PICOCLAW_DIGEST}"
-          echo "Heavy runtime: ${HEAVY_RUNTIME_IMAGE}@${RUNTIME_DIGEST}"
+          echo "PicoClaw digest: ${PICOCLAW_DIGEST}"
+          echo "Runtime digest: ${RUNTIME_DIGEST}"
           echo "Build base: ${BUILD_BASE}"
           echo "Build heavy: ${BUILD_HEAVY}"
 
       - name: Skip base image
         if: steps.check.outputs.build_base != 'true'
-        run: echo "Base image already built for this PicoClaw upstream digest."
+        run: echo "Base image already exists for this PicoClaw digest."
 
       - name: Skip heavy image
         if: steps.check.outputs.build_heavy != 'true'
-        run: echo "Heavy image already built for this PicoClaw + runtime digest."
+        run: echo "Heavy image already exists for this PicoClaw + runtime digest."
 
       - name: Save version info
         if: steps.check.outputs.build_base == 'true' || steps.check.outputs.build_heavy == 'true'
@@ -165,7 +215,7 @@ jobs:
             type=ref,event=tag
             type=sha,prefix=sha-
           labels: |
-            org.opencontainers.image.base.name=${{ env.PICOCLAW_UPSTREAM_IMAGE }}
+            org.opencontainers.image.base.name=${{ steps.resolve.outputs.picoclaw_upstream_image }}
             org.opencontainers.image.base.digest=${{ steps.check.outputs.picoclaw_digest }}
 
       - name: Build and push base image
@@ -177,7 +227,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            PICOCLAW_IMAGE=${{ env.PICOCLAW_UPSTREAM_IMAGE }}@${{ steps.check.outputs.picoclaw_digest }}
+            PICOCLAW_IMAGE=${{ steps.resolve.outputs.picoclaw_upstream_image }}@${{ steps.check.outputs.picoclaw_digest }}
           tags: ${{ steps.meta_base.outputs.tags }}
           labels: ${{ steps.meta_base.outputs.labels }}
           cache-from: type=gha,scope=pico-claw-web
@@ -195,10 +245,11 @@ jobs:
             type=ref,event=tag
             type=sha,prefix=sha-
           labels: |
-            org.opencontainers.image.picoclaw.base.name=${{ env.PICOCLAW_UPSTREAM_IMAGE }}
+            org.opencontainers.image.picoclaw.base.name=${{ steps.resolve.outputs.picoclaw_upstream_image }}
             org.opencontainers.image.picoclaw.base.digest=${{ steps.check.outputs.picoclaw_digest }}
-            org.opencontainers.image.runtime.base.name=${{ env.HEAVY_RUNTIME_IMAGE }}
+            org.opencontainers.image.runtime.base.name=${{ steps.resolve.outputs.heavy_runtime_image }}
             org.opencontainers.image.runtime.base.digest=${{ steps.check.outputs.runtime_digest }}
+            org.opencontainers.image.playwright.version=${{ steps.resolve.outputs.playwright_version }}
 
       - name: Build and push heavy image
         if: steps.check.outputs.build_heavy == 'true'
@@ -209,8 +260,9 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            PICOCLAW_IMAGE=${{ env.PICOCLAW_UPSTREAM_IMAGE }}@${{ steps.check.outputs.picoclaw_digest }}
-            RUNTIME_IMAGE=${{ env.HEAVY_RUNTIME_IMAGE }}@${{ steps.check.outputs.runtime_digest }}
+            PICOCLAW_IMAGE=${{ steps.resolve.outputs.picoclaw_upstream_image }}@${{ steps.check.outputs.picoclaw_digest }}
+            RUNTIME_IMAGE=${{ steps.resolve.outputs.heavy_runtime_image }}@${{ steps.check.outputs.runtime_digest }}
+            PLAYWRIGHT_VERSION=${{ steps.resolve.outputs.playwright_version }}
           tags: ${{ steps.meta_heavy.outputs.tags }}
           labels: ${{ steps.meta_heavy.outputs.labels }}
           cache-from: type=gha,scope=pico-claw-web-heavy
