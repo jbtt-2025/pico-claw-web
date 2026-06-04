@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
-ARG PICOCLAW_IMAGE=docker.io/sipeed/picoclaw:v0.2.9-launcher
-ARG RUNTIME_IMAGE=mcr.microsoft.com/playwright:v1.59.0-noble
-ARG PLAYWRIGHT_VERSION=1.59.0
+ARG PICOCLAW_IMAGE=docker.io/sipeed/picoclaw:launcher
+ARG RUNTIME_IMAGE=mcr.microsoft.com/playwright:v1.60.0-noble
+ARG PLAYWRIGHT_VERSION=1.60.0
 
 FROM --platform=$TARGETPLATFORM ${PICOCLAW_IMAGE} AS picoclaw
 
@@ -108,6 +108,17 @@ fi
 EOF
 
 RUN chmod +x /usr/local/bin/picoclaw-heavy-entrypoint.sh
+
+RUN set -eux; \
+    node --version; \
+    npm --version; \
+    git --version; \
+    gh --version; \
+    playwright --version; \
+    command -v agent-browser; \
+    command -v codex; \
+    command -v claude; \
+    command -v gemini
 
 EXPOSE 18800 18790
 
