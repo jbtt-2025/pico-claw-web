@@ -1,4 +1,5 @@
-FROM docker.io/sipeed/picoclaw:v0.2.9-launcher
+ARG PICOCLAW_IMAGE=docker.io/sipeed/picoclaw:v0.2.9-launcher
+FROM ${PICOCLAW_IMAGE}
 
 USER root
 
