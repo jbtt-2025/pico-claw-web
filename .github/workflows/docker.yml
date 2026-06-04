@@ -48,10 +48,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Node.js for version resolving
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      - name: Install image inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo jq
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -82,35 +82,37 @@ jobs:
           )"
 
           if [ -z "$PICOCLAW_UPSTREAM_IMAGE" ]; then
-            PICOCLAW_UPSTREAM_IMAGE="$(
-              awk '
-                toupper($1)=="FROM" {
-                  for (i=2; i<=NF; i++) {
-                    if ($i !~ /^--platform=/ && toupper($i)!="AS") {
-                      print $i
-                      exit
-                    }
-                  }
-                }
-              ' Dockerfile
-            )"
-          fi
-
-          if [ -z "$PICOCLAW_UPSTREAM_IMAGE" ]; then
-            echo "Failed to resolve PicoClaw upstream image from Dockerfile." >&2
+            echo "Failed to resolve PICOCLAW_IMAGE from Dockerfile." >&2
             exit 1
           fi
 
-          PLAYWRIGHT_VERSION="$(npm view playwright version)"
-          HEAVY_RUNTIME_IMAGE="mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-${PLAYWRIGHT_RUNTIME_OS}"
+          PLAYWRIGHT_RUNTIME_TAG="$(
+            skopeo list-tags docker://mcr.microsoft.com/playwright \
+              | jq -r --arg os "${PLAYWRIGHT_RUNTIME_OS}" '
+                  .Tags[]
+                  | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-" + $os + "$"))
+                ' \
+              | sort -V \
+              | tail -n 1
+          )"
+
+          if [ -z "$PLAYWRIGHT_RUNTIME_TAG" ]; then
+            echo "Failed to resolve latest Playwright runtime tag." >&2
+            exit 1
+          fi
+
+          PLAYWRIGHT_VERSION="${PLAYWRIGHT_RUNTIME_TAG#v}"
+          PLAYWRIGHT_VERSION="${PLAYWRIGHT_VERSION%-${PLAYWRIGHT_RUNTIME_OS}}"
+
+          HEAVY_RUNTIME_IMAGE="mcr.microsoft.com/playwright:${PLAYWRIGHT_RUNTIME_TAG}"
 
           echo "picoclaw_upstream_image=${PICOCLAW_UPSTREAM_IMAGE}" >> "$GITHUB_OUTPUT"
           echo "playwright_version=${PLAYWRIGHT_VERSION}" >> "$GITHUB_OUTPUT"
           echo "heavy_runtime_image=${HEAVY_RUNTIME_IMAGE}" >> "$GITHUB_OUTPUT"
 
           echo "PicoClaw upstream image: ${PICOCLAW_UPSTREAM_IMAGE}"
+          echo "Playwright runtime image: ${HEAVY_RUNTIME_IMAGE}"
           echo "Playwright version: ${PLAYWRIGHT_VERSION}"
-          echo "Heavy runtime image: ${HEAVY_RUNTIME_IMAGE}"
 
       - name: Check upstream image digests
         id: check
@@ -119,26 +121,33 @@ jobs:
           FORCE_REBUILD: ${{ inputs.force_rebuild || 'false' }}
           PICOCLAW_UPSTREAM_IMAGE: ${{ steps.resolve.outputs.picoclaw_upstream_image }}
           HEAVY_RUNTIME_IMAGE: ${{ steps.resolve.outputs.heavy_runtime_image }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          PICOCLAW_DIGEST="$(
-            docker buildx imagetools inspect "${PICOCLAW_UPSTREAM_IMAGE}" \
-              | awk '/^Digest:/ {print $2; exit}'
-          )"
+          image_digest() {
+            local image="$1"
+            echo "Inspecting digest: ${image}" >&2
+            skopeo inspect --format '{{.Digest}}' "docker://${image}"
+          }
 
-          RUNTIME_DIGEST="$(
-            docker buildx imagetools inspect "${HEAVY_RUNTIME_IMAGE}" \
-              | awk '/^Digest:/ {print $2; exit}'
-          )"
+          ghcr_tag_exists() {
+            local image="$1"
+            skopeo inspect \
+              --creds "${GITHUB_ACTOR}:${GITHUB_TOKEN}" \
+              "docker://${image}" >/dev/null 2>&1
+          }
+
+          PICOCLAW_DIGEST="$(image_digest "${PICOCLAW_UPSTREAM_IMAGE}")"
+          RUNTIME_DIGEST="$(image_digest "${HEAVY_RUNTIME_IMAGE}")"
 
           if [ -z "$PICOCLAW_DIGEST" ]; then
-            echo "Failed to resolve PicoClaw upstream digest: ${PICOCLAW_UPSTREAM_IMAGE}" >&2
+            echo "Failed to resolve PicoClaw digest." >&2
             exit 1
           fi
 
           if [ -z "$RUNTIME_DIGEST" ]; then
-            echo "Failed to resolve heavy runtime digest: ${HEAVY_RUNTIME_IMAGE}" >&2
+            echo "Failed to resolve Playwright runtime digest." >&2
             exit 1
           fi
 
@@ -156,18 +165,21 @@ jobs:
           BASE_EXISTS=false
           HEAVY_EXISTS=false
 
-          if docker buildx imagetools inspect "$BASE_UPSTREAM_TAG" >/dev/null 2>&1; then
+          if ghcr_tag_exists "$BASE_UPSTREAM_TAG"; then
             BASE_EXISTS=true
           fi
 
-          if docker buildx imagetools inspect "$HEAVY_UPSTREAM_TAG" >/dev/null 2>&1; then
+          if ghcr_tag_exists "$HEAVY_UPSTREAM_TAG"; then
             HEAVY_EXISTS=true
           fi
 
-          BUILD_BASE=true
-          BUILD_HEAVY=true
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] || [ "${FORCE_REBUILD}" = "true" ]; then
+            BUILD_BASE=true
+            BUILD_HEAVY=true
+          else
+            BUILD_BASE=true
+            BUILD_HEAVY=true
 
-          if [ "${GITHUB_EVENT_NAME}" = "schedule" ] && [ "${FORCE_REBUILD}" != "true" ]; then
             if [ "$BASE_EXISTS" = "true" ]; then
               BUILD_BASE=false
             fi
@@ -187,6 +199,10 @@ jobs:
 
           echo "PicoClaw digest: ${PICOCLAW_DIGEST}"
           echo "Runtime digest: ${RUNTIME_DIGEST}"
+          echo "Base marker: ${BASE_UPSTREAM_TAG}"
+          echo "Heavy marker: ${HEAVY_UPSTREAM_TAG}"
+          echo "Base exists: ${BASE_EXISTS}"
+          echo "Heavy exists: ${HEAVY_EXISTS}"
           echo "Build base: ${BUILD_BASE}"
           echo "Build heavy: ${BUILD_HEAVY}"
 
@@ -257,7 +273,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile.heavy
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
             PICOCLAW_IMAGE=${{ steps.resolve.outputs.picoclaw_upstream_image }}@${{ steps.check.outputs.picoclaw_digest }}
