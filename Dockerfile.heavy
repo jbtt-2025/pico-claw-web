@@ -1,0 +1,116 @@
+# syntax=docker/dockerfile:1.7
+
+ARG PICOCLAW_IMAGE=docker.io/sipeed/picoclaw:v0.2.9-launcher
+ARG RUNTIME_IMAGE=mcr.microsoft.com/playwright:latest
+
+FROM --platform=$TARGETPLATFORM ${PICOCLAW_IMAGE} AS picoclaw
+
+FROM --platform=$TARGETPLATFORM ${RUNTIME_IMAGE}
+
+USER root
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PICOCLAW_HOME=/var/data/picoclaw \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    AGENT_BROWSER_HEADLESS=1 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_AUDIT=false
+
+COPY --from=picoclaw /usr/local/bin/picoclaw /usr/local/bin/picoclaw
+COPY --from=picoclaw /usr/local/bin/picoclaw-launcher /usr/local/bin/picoclaw-launcher
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    wget \
+    gnupg \
+    git \
+    git-lfs \
+    openssh-client \
+    jq \
+    yq \
+    ripgrep \
+    fd-find \
+    fzf \
+    less \
+    vim-tiny \
+    nano \
+    unzip \
+    zip \
+    tar \
+    rsync \
+    sqlite3 \
+    procps \
+    lsof \
+    dnsutils \
+    iputils-ping \
+    build-essential \
+    pkg-config \
+    python3 \
+    python3-pip \
+    python3-venv \
+    python3-dev \
+    pipx \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && git lfs install --system \
+    && ln -sf "$(command -v fdfind)" /usr/local/bin/fd \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g \
+      pnpm \
+      yarn \
+      playwright \
+      @playwright/test \
+      @playwright/cli \
+      @playwright/mcp \
+      agent-browser \
+      @openai/codex \
+      @anthropic-ai/claude-code \
+      @google/gemini-cli \
+    && agent-browser install \
+    && npm cache clean --force
+
+RUN mkdir -p /var/data/picoclaw \
+    && chmod -R 777 /var/data \
+    && cat > /usr/local/bin/picoclaw-heavy-entrypoint.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PICOCLAW_HOME="${PICOCLAW_HOME:-/var/data/picoclaw}"
+
+mkdir -p "$PICOCLAW_HOME"
+
+WEB_PORT="${PORT:-18800}"
+
+if [ -n "${PICOCLAW_CONFIG:-}" ]; then
+  exec picoclaw-launcher \
+    -console \
+    -public \
+    -no-browser \
+    -port "$WEB_PORT" \
+    "$PICOCLAW_CONFIG"
+else
+  exec picoclaw-launcher \
+    -console \
+    -public \
+    -no-browser \
+    -port "$WEB_PORT"
+fi
+EOF
+RUN chmod +x /usr/local/bin/picoclaw-heavy-entrypoint.sh
+
+EXPOSE 18800 18790
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD bash -lc 'curl -fsS "http://127.0.0.1:${PORT:-18800}/" >/dev/null'
+
+ENTRYPOINT ["/usr/local/bin/picoclaw-heavy-entrypoint.sh"]
