@@ -5,11 +5,27 @@ FROM ${PICOCLAW_IMAGE}
 
 USER root
 
-ENV PICOCLAW_HOME=/var/data/picoclaw
+ENV PICOCLAW_HOME=/var/data/picoclaw \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_AUDIT=false
 
-RUN apk add --no-cache curl \
+RUN apk add --no-cache \
+      bash \
+      curl \
+      git \
+      python3 \
+      py3-pip \
+      nodejs \
+      npm \
     && mkdir -p /var/data/picoclaw \
-    && chmod -R 777 /var/data \
+    && mkdir -p /root/.config/pip \
+    && cat > /root/.config/pip/pip.conf <<'EOF'
+[global]
+break-system-packages = true
+EOF
+
+RUN chmod -R 777 /var/data \
     && cat > /usr/local/bin/picoclaw-web-entrypoint.sh <<'EOF'
 #!/bin/sh
 set -eu
@@ -37,6 +53,14 @@ fi
 EOF
 
 RUN chmod +x /usr/local/bin/picoclaw-web-entrypoint.sh
+
+RUN set -eux; \
+    python3 --version; \
+    pip3 --version; \
+    node --version; \
+    npm --version; \
+    git --version; \
+    pip3 config list
 
 EXPOSE 18800 18790
 
