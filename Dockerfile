@@ -28,6 +28,12 @@ RUN apk add --no-cache \
       python3 \
       python3-dev \
       py3-pip \
+      py3-lxml \
+      py3-beautifulsoup4 \
+      py3-openpyxl \
+      py3-pymysql \
+      py3-redis \
+      py3-sqlalchemy \
       nodejs \
       npm \
       pandoc \
@@ -51,18 +57,9 @@ RUN npm install -g pnpm \
     && pip3 install --no-cache-dir \
       uv \
       markdown \
-      beautifulsoup4 \
-      lxml \
       python-docx \
-      openpyxl \
       python-pptx \
-      pypdf \
-      pymupdf \
-      redis \
-      'psycopg[binary]' \
-      pymysql \
-      mysql-connector-python \
-      sqlalchemy
+      pypdf
 
 RUN chmod -R 777 /var/data \
     && cat > /usr/local/bin/md2pdf <<'EOF'
@@ -135,8 +132,8 @@ RUN set -eux; \
     python3-config --includes; \
     pip3 --version; \
     uv --version; \
-    python3 -c "import redis, psycopg, pymysql, mysql.connector, sqlalchemy; print('python db clients ok')"; \
-    python3 -c "import markdown, bs4, lxml, docx, openpyxl, pptx, pypdf, fitz; print('python document libs ok')"; \
+    python3 -c "import redis, pymysql, sqlalchemy; print('python db clients ok')"; \
+    python3 -c "import markdown, bs4, lxml, docx, openpyxl, pptx, pypdf; print('python document libs ok')"; \
     node --version; \
     npm --version; \
     pnpm --version; \
