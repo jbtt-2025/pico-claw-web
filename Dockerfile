@@ -135,14 +135,8 @@ RUN set -eux; \
     python3-config --includes; \
     pip3 --version; \
     uv --version; \
-    python3 - <<'PY'
-import redis
-import psycopg
-import pymysql
-import mysql.connector
-import sqlalchemy
-print("python db clients ok")
-PY
+    python3 -c "import redis, psycopg, pymysql, mysql.connector, sqlalchemy; print('python db clients ok')"; \
+    python3 -c "import markdown, bs4, lxml, docx, openpyxl, pptx, pypdf, fitz; print('python document libs ok')"; \
     node --version; \
     npm --version; \
     pnpm --version; \
