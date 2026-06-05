@@ -14,6 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PICOCLAW_HOME=/var/data/picoclaw \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     AGENT_BROWSER_HEADLESS=1 \
+    AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_AUDIT=false
@@ -76,7 +77,34 @@ RUN npm install -g \
       @openai/codex \
       @anthropic-ai/claude-code \
       @google/gemini-cli \
-    && agent-browser install \
+    && CHROMIUM_PATH="$(find /ms-playwright -type f -path '*/chrome-linux/chrome' | head -n 1)" \
+    && if [ -z "$CHROMIUM_PATH" ]; then \
+         echo "Chromium executable not found under /ms-playwright" >&2; \
+         find /ms-playwright -maxdepth 4 -type f | head -n 120 >&2; \
+         exit 1; \
+       fi \
+    && ln -sf "$CHROMIUM_PATH" /usr/local/bin/chromium \
+    && AGENT_BROWSER_BIN="$(command -v agent-browser)" \
+    && mv "$AGENT_BROWSER_BIN" /usr/local/bin/agent-browser-real \
+    && cat > /usr/local/bin/agent-browser <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+CHROMIUM="${AGENT_BROWSER_EXECUTABLE_PATH:-/usr/local/bin/chromium}"
+
+case " $* " in
+  *" --executable-path "*)
+    exec /usr/local/bin/agent-browser-real "$@"
+    ;;
+  *" --help "*|*" -h "*|*" --version "*|*" version "*)
+    exec /usr/local/bin/agent-browser-real "$@"
+    ;;
+  *)
+    exec /usr/local/bin/agent-browser-real --executable-path "$CHROMIUM" "$@"
+    ;;
+esac
+EOF
+RUN chmod +x /usr/local/bin/agent-browser \
     && npm cache clean --force
 
 RUN mkdir -p /var/data/picoclaw \
@@ -115,7 +143,9 @@ RUN set -eux; \
     git --version; \
     gh --version; \
     playwright --version; \
+    command -v chromium; \
     command -v agent-browser; \
+    command -v agent-browser-real; \
     command -v codex; \
     command -v claude; \
     command -v gemini
