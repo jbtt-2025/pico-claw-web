@@ -1,117 +1,34 @@
 # syntax=docker/dockerfile:1.7
 
 ARG PICOCLAW_IMAGE=docker.io/sipeed/picoclaw:launcher
-ARG RUNTIME_IMAGE=mcr.microsoft.com/playwright:v1.60.0-noble
-ARG PLAYWRIGHT_VERSION=1.60.0
-
-FROM --platform=$TARGETPLATFORM ${PICOCLAW_IMAGE} AS picoclaw
-
-FROM --platform=$TARGETPLATFORM ${RUNTIME_IMAGE}
+FROM ${PICOCLAW_IMAGE}
 
 USER root
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PICOCLAW_HOME=/var/data/picoclaw \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    AGENT_BROWSER_HEADLESS=1 \
-    AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium \
+ENV PICOCLAW_HOME=/var/data/picoclaw \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_AUDIT=false
 
-COPY --from=picoclaw /usr/local/bin/picoclaw /usr/local/bin/picoclaw
-COPY --from=picoclaw /usr/local/bin/picoclaw-launcher /usr/local/bin/picoclaw-launcher
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash \
-    ca-certificates \
-    curl \
-    wget \
-    gnupg \
-    git \
-    git-lfs \
-    openssh-client \
-    jq \
-    yq \
-    ripgrep \
-    fd-find \
-    fzf \
-    less \
-    vim-tiny \
-    nano \
-    unzip \
-    zip \
-    tar \
-    rsync \
-    sqlite3 \
-    procps \
-    lsof \
-    dnsutils \
-    iputils-ping \
-    build-essential \
-    pkg-config \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-dev \
-    pipx \
-    && mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends gh \
-    && git lfs install --system \
-    && ln -sf "$(command -v fdfind)" /usr/local/bin/fd \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN npm install -g \
-      pnpm \
-      yarn \
-      playwright@${PLAYWRIGHT_VERSION} \
-      @playwright/test@${PLAYWRIGHT_VERSION} \
-      @playwright/mcp \
-      agent-browser \
-      @openai/codex \
-      @anthropic-ai/claude-code \
-      @google/gemini-cli \
-    && CHROMIUM_PATH="$(find /ms-playwright -type f -path '*/chrome-linux/chrome' | head -n 1)" \
-    && if [ -z "$CHROMIUM_PATH" ]; then \
-         echo "Chromium executable not found under /ms-playwright" >&2; \
-         find /ms-playwright -maxdepth 4 -type f | head -n 120 >&2; \
-         exit 1; \
-       fi \
-    && ln -sf "$CHROMIUM_PATH" /usr/local/bin/chromium \
-    && AGENT_BROWSER_BIN="$(command -v agent-browser)" \
-    && mv "$AGENT_BROWSER_BIN" /usr/local/bin/agent-browser-real \
-    && cat > /usr/local/bin/agent-browser <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-CHROMIUM="${AGENT_BROWSER_EXECUTABLE_PATH:-/usr/local/bin/chromium}"
-
-case " $* " in
-  *" --executable-path "*)
-    exec /usr/local/bin/agent-browser-real "$@"
-    ;;
-  *" --help "*|*" -h "*|*" --version "*|*" version "*)
-    exec /usr/local/bin/agent-browser-real "$@"
-    ;;
-  *)
-    exec /usr/local/bin/agent-browser-real --executable-path "$CHROMIUM" "$@"
-    ;;
-esac
+RUN apk add --no-cache \
+      bash \
+      curl \
+      git \
+      python3 \
+      py3-pip \
+      nodejs \
+      npm \
+    && mkdir -p /var/data/picoclaw \
+    && mkdir -p /root/.config/pip \
+    && cat > /root/.config/pip/pip.conf <<'EOF'
+[global]
+break-system-packages = true
 EOF
-RUN chmod +x /usr/local/bin/agent-browser \
-    && npm cache clean --force
 
-RUN mkdir -p /var/data/picoclaw \
-    && chmod -R 777 /var/data \
-    && cat > /usr/local/bin/picoclaw-heavy-entrypoint.sh <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
+RUN chmod -R 777 /var/data \
+    && cat > /usr/local/bin/picoclaw-web-entrypoint.sh <<'EOF'
+#!/bin/sh
+set -eu
 
 export PICOCLAW_HOME="${PICOCLAW_HOME:-/var/data/picoclaw}"
 
@@ -135,24 +52,19 @@ else
 fi
 EOF
 
-RUN chmod +x /usr/local/bin/picoclaw-heavy-entrypoint.sh
+RUN chmod +x /usr/local/bin/picoclaw-web-entrypoint.sh
 
 RUN set -eux; \
+    python3 --version; \
+    pip3 --version; \
     node --version; \
     npm --version; \
     git --version; \
-    gh --version; \
-    playwright --version; \
-    command -v chromium; \
-    command -v agent-browser; \
-    command -v agent-browser-real; \
-    command -v codex; \
-    command -v claude; \
-    command -v gemini
+    pip3 config list
 
 EXPOSE 18800 18790
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD bash -lc 'curl -fsS "http://127.0.0.1:${PORT:-18800}/" >/dev/null'
+  CMD sh -c 'curl -fsS "http://127.0.0.1:${PORT:-18800}/" >/dev/null'
 
-ENTRYPOINT ["/usr/local/bin/picoclaw-heavy-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/picoclaw-web-entrypoint.sh"]
