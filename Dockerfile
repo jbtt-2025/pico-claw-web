@@ -14,6 +14,15 @@ RUN apk add --no-cache \
       bash \
       curl \
       git \
+      jq \
+      ripgrep \
+      fd \
+      tree \
+      tmux \
+      make \
+      build-base \
+      cmake \
+      github-cli \
       python3 \
       py3-pip \
       nodejs \
@@ -24,6 +33,9 @@ RUN apk add --no-cache \
 [global]
 break-system-packages = true
 EOF
+
+RUN npm install -g pnpm \
+    && pip3 install --no-cache-dir uv
 
 RUN chmod -R 777 /var/data \
     && cat > /usr/local/bin/picoclaw-web-entrypoint.sh <<'EOF'
@@ -55,11 +67,22 @@ EOF
 RUN chmod +x /usr/local/bin/picoclaw-web-entrypoint.sh
 
 RUN set -eux; \
+    bash --version | head -n 1; \
     python3 --version; \
     pip3 --version; \
+    uv --version; \
     node --version; \
     npm --version; \
+    pnpm --version; \
     git --version; \
+    gh --version | head -n 1; \
+    jq --version; \
+    rg --version | head -n 1; \
+    fd --version; \
+    tree --version; \
+    tmux -V; \
+    make --version | head -n 1; \
+    cmake --version | head -n 1; \
     pip3 config list
 
 EXPOSE 18800 18790
