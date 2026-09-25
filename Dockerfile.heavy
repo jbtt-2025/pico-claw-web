@@ -87,8 +87,10 @@ RUN npm install -g \
          find /ms-playwright -type f \( \
            -path '*/chrome-linux/chrome' \
            -o -path '*/chrome-linux64/chrome' \
+           -o -path '*/chrome-linux-arm64/chrome' \
            -o -path '*/chrome-headless-shell-linux64/chrome-headless-shell' \
            -o -path '*/chrome-headless-shell-linux/chrome-headless-shell' \
+           -o -path '*/chrome-headless-shell-linux-arm64/chrome-headless-shell' \
          \) | head -n 1 \
        )" \
     && if [ -z "$CHROMIUM_PATH" ]; then \
